@@ -306,7 +306,11 @@ public class PgrbGraphEngine {
         }
 
         double minDistSq = Double.POSITIVE_INFINITY;
-        PgrbSnap bestSnap = null;
+        int bestE = -1;
+        int bestP = -1;
+        double bestT = 0;
+        double bestProjX = 0;
+        double bestProjY = 0;
 
         int totalScan = (edgesToScan != null) ? edgesToScan.length : g.edgeCount;
         double radLat = Math.toRadians(lat);
@@ -317,10 +321,6 @@ public class PgrbGraphEngine {
             int cStart = g.edgesCoordStart[e];
             int cEnd = (e + 1 < g.edgeCount) ? g.edgesCoordStart[e + 1] : g.pointCount;
             if (cEnd - cStart < 2) continue;
-
-            float costVal = g.edgesCost[e];
-            float revCostVal = g.edgesReverseCost[e];
-            double edgeLenMeters = Math.max(0.1, costVal > 0 ? costVal : (revCostVal > 0 ? revCostVal : 100.0));
 
             for (int p = cStart; p < cEnd - 1; p++) {
                 int ax = g.coordPool[p * 2];
@@ -349,44 +349,58 @@ public class PgrbGraphEngine {
 
                 if (distSq < minDistSq) {
                     minDistSq = distSq;
-
-                    int v = g.edgesTarget[e];
-                    int u = 0;
-                    int low = 0, high = g.nodeCount - 1;
-                    while (low <= high) {
-                        int mid = (low + high) >>> 1;
-                        int sEdge = g.nodeOffsets[mid];
-                        int eEdge = g.nodeOffsets[mid + 1];
-                        if (e >= sEdge && e < eEdge) {
-                            u = mid;
-                            break;
-                        } else if (e < sEdge) {
-                            high = mid - 1;
-                        } else {
-                            low = mid + 1;
-                        }
-                    }
-
-                    int totalPtsInEdge = cEnd - cStart;
-                    double approxFrac = Math.max(0.0, Math.min(1.0, (p - cStart + t) / Math.max(1, totalPtsInEdge - 1)));
-
-                    bestSnap = new PgrbSnap(
-                            e,
-                            p - cStart,
-                            approxFrac,
-                            new double[]{projX / 1e6, projY / 1e6},
-                            u,
-                            v,
-                            edgeLenMeters,
-                            (approxFrac > 0.5) ? v : u,
-                            costVal,
-                            revCostVal
-                    );
+                    bestE = e;
+                    bestP = p;
+                    bestT = t;
+                    bestProjX = projX;
+                    bestProjY = projY;
                 }
             }
         }
 
-        return bestSnap;
+        if (bestE == -1) {
+            return null;
+        }
+
+        // 仅对最终获胜的最优边 bestE 执行单次二分查找定位起点 u
+        int v = g.edgesTarget[bestE];
+        int u = 0;
+        int low = 0, high = g.nodeCount - 1;
+        while (low <= high) {
+            int mid = (low + high) >>> 1;
+            int sEdge = g.nodeOffsets[mid];
+            int eEdge = g.nodeOffsets[mid + 1];
+            if (bestE >= sEdge && bestE < eEdge) {
+                u = mid;
+                break;
+            } else if (bestE < sEdge) {
+                high = mid - 1;
+            } else {
+                low = mid + 1;
+            }
+        }
+
+        int bestCStart = g.edgesCoordStart[bestE];
+        int bestCEnd = (bestE + 1 < g.edgeCount) ? g.edgesCoordStart[bestE + 1] : g.pointCount;
+        int totalPtsInEdge = bestCEnd - bestCStart;
+        double approxFrac = Math.max(0.0, Math.min(1.0, (bestP - bestCStart + bestT) / Math.max(1, totalPtsInEdge - 1)));
+
+        float costVal = g.edgesCost[bestE];
+        float revCostVal = g.edgesReverseCost[bestE];
+        double edgeLenMeters = Math.max(0.1, costVal > 0 ? costVal : (revCostVal > 0 ? revCostVal : 100.0));
+
+        return new PgrbSnap(
+                bestE,
+                bestP - bestCStart,
+                approxFrac,
+                new double[]{bestProjX / 1e6, bestProjY / 1e6},
+                u,
+                v,
+                edgeLenMeters,
+                (approxFrac > 0.5) ? v : u,
+                costVal,
+                revCostVal
+        );
     }
 
     // ==========================================
