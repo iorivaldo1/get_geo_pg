@@ -16,21 +16,21 @@ import java.util.HashMap;
 import java.util.Map;
 
 /**
- * 上传shp文件夹来创建路网
+ * 路网数据资产管理与构建控制器 (PostGIS 数据库端路网生命周期管理)
  * 
- * RouteController
+ * RouteDataManageController
  */
 
 @RestController
-@RequestMapping("/geo/route")
+@RequestMapping("/geo/route/data-manage")
 @CrossOrigin
-public class RouteController {
+public class RouteDataManageController {
 
     @Autowired
     private RouteService routeService;
 
     @Autowired
-    private com.qskj.get_geo_pg.service.RoadBuildService roadBuildService;
+    private com.qskj.get_geo_pg.service.ShpRoadBuildService shpRoadBuildService;
 
     @Autowired
     private com.qskj.get_geo_pg.service.XzqRoadBuildService xzqRoadBuildService;
@@ -68,7 +68,7 @@ public class RouteController {
             @RequestParam(value = "encoding", defaultValue = "GBK") String encoding) {
         Map<String, Object> response = new HashMap<>();
         try {
-            Map<String, Object> buildResult = roadBuildService.buildRoadNetworkFromFolder(files, networkId, networkName,
+            Map<String, Object> buildResult = shpRoadBuildService.buildRoadNetworkFromFolder(files, networkId, networkName,
                     encoding);
             response.put("code", 200);
             response.put("msg", "构建成功");

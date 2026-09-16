@@ -181,7 +181,17 @@ public class PgrbStorageService {
             int boundaryOffset = (idMapOffset + idMapSize + 3) & ~3;
             if (binaryData.length >= boundaryOffset + 8) {
                 if (version >= 3) {
-                    boundaryPointCount = (binaryData.length - boundaryOffset) / 8;
+                    if (binaryData.length >= boundaryOffset + 16
+                            && buf.get(boundaryOffset) == 'P'
+                            && buf.get(boundaryOffset + 1) == 'G'
+                            && buf.get(boundaryOffset + 2) == 'B'
+                            && buf.get(boundaryOffset + 3) == 'B') {
+                        // 兼容过渡版本 PGBB 规范：totalPointCount 在偏移量 12 处
+                        boundaryPointCount = buf.getInt(boundaryOffset + 12);
+                    } else {
+                        // 现行统一 PGRB v3 规范：ringCount (4B) + totalPointCount (4B)
+                        boundaryPointCount = buf.getInt(boundaryOffset + 4);
+                    }
                 } else if (version == 2) {
                     buf.position(boundaryOffset);
                     boundaryPointCount = buf.getInt();

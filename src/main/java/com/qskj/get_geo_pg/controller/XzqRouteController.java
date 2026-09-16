@@ -333,7 +333,7 @@ public class XzqRouteController {
     }
 
     /**
-     * 10. 行政区划点对点路径规划端点 (对齐 RouteController 的 4-Combo 单行道精确算法)
+     * 10. 行政区划点对点路径规划端点 (对齐 RouteDataManageController 的 4-Combo 单行道精确算法)
      */
     @PostMapping("/plan")
     public Map<String, Object> planRoute(@RequestBody com.qskj.get_geo_pg.pojo.RouteRequest request) {

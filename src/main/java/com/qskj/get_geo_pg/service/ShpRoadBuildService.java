@@ -15,7 +15,7 @@ import java.nio.file.*;
 import java.util.*;
 
 @Service
-public class RoadBuildService {
+public class ShpRoadBuildService {
 
     @Autowired
     @Qualifier("graphsJdbcTemplate")

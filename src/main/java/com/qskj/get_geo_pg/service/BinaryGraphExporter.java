@@ -2,6 +2,7 @@ package com.qskj.get_geo_pg.service;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.qskj.get_geo_pg.pojo.PgrbBoundaryBinary;
 import com.qskj.get_geo_pg.pojo.RoadNetworkConfig;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Qualifier;
@@ -145,6 +146,26 @@ public class BinaryGraphExporter {
             boundaryPointCount += ring.size();
         }
 
+        // 规范化构建 PGRB v3 统一多环矢量边界（由 Header.version 统摄，直接包含 ringCount、ringSizes 与各环闭合坐标）
+        byte[] boundaryBinaryData = null;
+        int boundaryPoolSize = 0;
+        if (ringCount > 0 && boundaryPointCount > 0) {
+            int[] ringSizes = new int[ringCount];
+            int[] boundaryCoords = new int[boundaryPointCount * 2];
+            int bCoordIdx = 0;
+            for (int r = 0; r < ringCount; r++) {
+                List<double[]> ring = boundaryRings.get(r);
+                ringSizes[r] = ring.size();
+                for (double[] pt : ring) {
+                    boundaryCoords[bCoordIdx++] = (int) Math.round(pt[0] * 1e6);
+                    boundaryCoords[bCoordIdx++] = (int) Math.round(pt[1] * 1e6);
+                }
+            }
+            PgrbBoundaryBinary boundaryObj = new PgrbBoundaryBinary(networkId, ringCount, boundaryPointCount, ringSizes, boundaryCoords);
+            boundaryBinaryData = boundaryObj.toBinary();
+            boundaryPoolSize = boundaryBinaryData.length;
+        }
+
         // 7. 计算各个数据块的字节偏移量并构建 ByteBuffer (Little-Endian)
         int headerSize = 40;
         int nodeOffsetsSize = (nodeCount + 1) * 4;
@@ -162,9 +183,6 @@ public class BinaryGraphExporter {
         }
         int idMapSize = nodeCount * idBytes;
         int idMapPadding = (idMapSize % 4 != 0) ? (4 - (idMapSize % 4)) : 0; // 保证 BoundaryPool 4 字节对齐
-
-        // v3: BoundaryPool 段纯坐标池大小: coords(boundaryPointCount * 8B)
-        int boundaryPoolSize = boundaryPointCount * 8;
 
         int totalBytes = headerSize + nodeOffsetsSize + nodeOffsetsPadding + edgesSize + coordPoolSize + idMapSize + idMapPadding + boundaryPoolSize;
         int idMapOffset = headerSize + nodeOffsetsSize + nodeOffsetsPadding + edgesSize + coordPoolSize;
@@ -227,14 +245,9 @@ public class BinaryGraphExporter {
             }
         }
 
-        // --- 写入 BoundaryPool (v3 纯坐标池特性) ---
-        for (List<double[]> ring : boundaryRings) {
-            for (double[] pt : ring) {
-                int lngS = (int) Math.round(pt[0] * 1e6);
-                int latS = (int) Math.round(pt[1] * 1e6);
-                buffer.putInt(lngS);                    // lngScaled (4B)
-                buffer.putInt(latS);                    // latScaled (4B)
-            }
+        // --- 写入 BoundaryPool (PGRB v3 规范：ringCount(4B) + totalPointCount(4B) + ringSizes + coords) ---
+        if (boundaryBinaryData != null && boundaryPoolSize > 0) {
+            buffer.put(boundaryBinaryData);
         }
 
         return buffer.array();

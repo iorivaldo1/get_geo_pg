@@ -1142,7 +1142,7 @@ public class XzqRoadBuildService {
             idCol = "gid";
 
         if (networkName == null || networkName.trim().isEmpty()) {
-            networkName = "3D立体路网_" + featureId;
+            networkName = "路网_" + featureId;
         }
 
         String roadTable = "osm.sc_road";
