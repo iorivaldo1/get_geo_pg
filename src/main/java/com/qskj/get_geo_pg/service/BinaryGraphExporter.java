@@ -146,7 +146,7 @@ public class BinaryGraphExporter {
             boundaryPointCount += ring.size();
         }
 
-        // 规范化构建 PGRB v3 统一多环矢量边界（由 Header.version 统摄，直接包含 ringCount、ringSizes 与各环闭合坐标）
+        // 规范化构建 PGRB v4 统一多环矢量边界（由 Header.version 统摄，直接包含 ringCount、ringSizes 与各环闭合坐标）
         byte[] boundaryBinaryData = null;
         int boundaryPoolSize = 0;
         if (ringCount > 0 && boundaryPointCount > 0) {
@@ -195,7 +195,7 @@ public class BinaryGraphExporter {
         buffer.put((byte) 'G');
         buffer.put((byte) 'R');
         buffer.put((byte) 'B');                       // magic (4B)
-        buffer.putShort((short) 3);                     // version = 3 (2B) 纯坐标池 BoundaryPool 规范
+        buffer.putShort((short) 4);                     // version = 4 (2B) 统一 8 字节多环规范 BoundaryPool
         buffer.putShort(idBytes);                       // flags = idBytes (2B: 记录 1, 2 或 4 字节自适应整型)
         buffer.putInt(nodeCount);                       // nodeCount (4B)
         buffer.putInt(edgeCount);                       // edgeCount (4B)
@@ -245,7 +245,7 @@ public class BinaryGraphExporter {
             }
         }
 
-        // --- 写入 BoundaryPool (PGRB v3 规范：ringCount(4B) + totalPointCount(4B) + ringSizes + coords) ---
+        // --- 写入 BoundaryPool (PGRB v4 规范：ringCount(4B) + totalPointCount(4B) + ringSizes + coords) ---
         if (boundaryBinaryData != null && boundaryPoolSize > 0) {
             buffer.put(boundaryBinaryData);
         }
