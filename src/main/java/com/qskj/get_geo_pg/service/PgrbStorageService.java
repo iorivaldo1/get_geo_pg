@@ -404,6 +404,38 @@ public class PgrbStorageService {
     }
 
     /**
+     * 9. 获取指定路网的行政级别 (level: city, county, town, village, shp)
+     */
+    public String getNetworkLevel(String networkId) {
+        if (networkId == null || networkId.trim().isEmpty()) {
+            return null;
+        }
+        try {
+            List<String> list = graphsJdbcTemplate.query(
+                    "SELECT level FROM \"3d_road\".sys_pgrb_file_manage WHERE network_id = ? AND status = 1 LIMIT 1",
+                    (rs, rowNum) -> rs.getString("level"), networkId.trim());
+            if (!list.isEmpty() && list.get(0) != null) {
+                return list.get(0).trim().toLowerCase();
+            }
+        } catch (Exception ignored) {
+        }
+        // 兜底推导规则
+        String lowerId = networkId.trim().toLowerCase();
+        if (lowerId.startsWith("xzq_city_") || lowerId.contains("_city_")) {
+            return "city";
+        } else if (lowerId.startsWith("xzq_county_") || lowerId.contains("_county_")) {
+            return "county";
+        } else if (lowerId.startsWith("xzq_town_") || lowerId.contains("_town_")) {
+            return "town";
+        } else if (lowerId.startsWith("xzq_village_") || lowerId.contains("_village_")) {
+            return "village";
+        } else if (lowerId.startsWith("shp_") || lowerId.contains("shp")) {
+            return "shp";
+        }
+        return null;
+    }
+
+    /**
      * 自动探测已有路网并入库生成 PGRB
      */
     private void autoSyncExistingNetworks() {

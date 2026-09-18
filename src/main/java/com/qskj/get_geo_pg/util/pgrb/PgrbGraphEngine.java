@@ -856,4 +856,451 @@ public class PgrbGraphEngine {
         rp.toBinary(); // 预热生成 cachedBinary
         return rp;
     }
+
+    // ==========================================
+    // A* 动画跟踪领域模型与算法引擎
+    // ==========================================
+
+    public static class AStarStep {
+        public int step;
+        public String action; // "PUSH" or "POP"
+        public int node;
+        public long nodeId;
+        public double[] coord;
+        public int fromNode = -1;
+        public double[] fromCoord;
+        public List<double[]> edgeCoords;
+        public Map<String, Object> cost;
+        public List<Map<String, Object>> branches; // 批量入堆分支列表 (同一个节点拓展出的所有邻接边与点)
+
+        public Map<String, Object> toMap() {
+            Map<String, Object> m = new LinkedHashMap<>();
+            m.put("step", step);
+            m.put("action", action);
+            m.put("node", node);
+            m.put("nodeId", nodeId);
+            m.put("coord", coord);
+            m.put("fromNode", fromNode);
+            m.put("fromCoord", fromCoord);
+            m.put("edgeCoords", edgeCoords);
+            m.put("cost", cost);
+            if (branches != null && !branches.isEmpty()) {
+                m.put("branches", branches);
+            }
+            return m;
+        }
+    }
+
+    public static class AStarAnimateResult {
+        public int[] path;
+        public double totalDistance;
+        public List<AStarStep> steps = new ArrayList<>();
+        public int popCount = 0;
+        public int pushCount = 0;
+    }
+
+    public static double[] getNodeCoord(PgrbGraph g, int u) {
+        if (g == null || u < 0 || g.nodeFirstCoordIdx == null || u >= g.nodeFirstCoordIdx.length) {
+            return new double[]{0, 0};
+        }
+        int cIdx = g.nodeFirstCoordIdx[u];
+        if (cIdx >= 0 && cIdx * 2 + 1 < g.coordPool.length) {
+            return new double[]{g.coordPool[cIdx * 2] / 1e6, g.coordPool[cIdx * 2 + 1] / 1e6};
+        }
+        return new double[]{0, 0};
+    }
+
+    public static List<double[]> getEdgeCoordsAsDoubles(PgrbGraph g, int edgeIdx, boolean isReverse) {
+        List<int[]> scaled = getEdgeCoordsScaled(g, edgeIdx);
+        if (scaled == null || scaled.isEmpty()) return Collections.emptyList();
+        List<double[]> res = new ArrayList<>(scaled.size());
+        if (isReverse) {
+            for (int k = scaled.size() - 1; k >= 0; k--) {
+                int[] pt = scaled.get(k);
+                res.add(new double[]{pt[0] / 1e6, pt[1] / 1e6});
+            }
+        } else {
+            for (int[] pt : scaled) {
+                res.add(new double[]{pt[0] / 1e6, pt[1] / 1e6});
+            }
+        }
+        return res;
+    }
+
+    public static List<double[]> findDirectedEdgeCoords(PgrbGraph g, int u, int v) {
+        if (g == null || u < 0 || v < 0) return Collections.emptyList();
+        int sEdge = (g.dirNodeOffsets != null) ? g.dirNodeOffsets[u] : (g.nodeOffsets != null ? g.nodeOffsets[u] : 0);
+        int eEdge = (g.dirNodeOffsets != null) ? g.dirNodeOffsets[u + 1] : (g.nodeOffsets != null ? g.nodeOffsets[u + 1] : 0);
+        for (int i = sEdge; i < eEdge; i++) {
+            int target = (g.dirTarget != null) ? g.dirTarget[i] : g.edgesTarget[i];
+            if (target == v) {
+                int rawIdx = (g.dirRawIdx != null) ? g.dirRawIdx[i] : i;
+                boolean isRev = (g.dirIsRev != null) && (g.dirIsRev[i] == 1);
+                return getEdgeCoordsAsDoubles(g, rawIdx, isRev);
+            }
+        }
+        int rawEdge = findEdgeIdxBetween(g, u, v);
+        if (rawEdge != -1) {
+            boolean isRev = (g.edgesTarget != null && rawEdge < g.edgesTarget.length && g.edgesTarget[rawEdge] == u);
+            return getEdgeCoordsAsDoubles(g, rawEdge, isRev);
+        }
+        return Collections.emptyList();
+    }
+
+    public static AStarAnimateResult astarAnimate(PgrbGraph g, int startIdx, int endIdx, boolean directed, int maxSteps) {
+        AStarAnimateResult result = new AStarAnimateResult();
+        if (g == null || startIdx < 0 || endIdx < 0 || startIdx >= g.nodeCount || endIdx >= g.nodeCount) {
+            return result;
+        }
+
+        if (startIdx == endIdx) {
+            result.path = new int[]{startIdx};
+            result.totalDistance = 0;
+            AStarStep s = new AStarStep();
+            s.step = 1;
+            s.action = "POP";
+            s.node = startIdx;
+            s.nodeId = g.idMap != null && startIdx < g.idMap.length ? g.idMap[startIdx] : startIdx;
+            s.coord = getNodeCoord(g, startIdx);
+            Map<String, Object> c = new LinkedHashMap<>();
+            c.put("g", 0.0); c.put("h", 0.0); c.put("f", 0.0);
+            s.cost = c;
+            result.steps.add(s);
+            result.popCount = 1;
+            return result;
+        }
+
+        float[] dist = new float[g.nodeCount];
+        int[] prev = new int[g.nodeCount];
+        Arrays.fill(dist, Float.POSITIVE_INFINITY);
+        Arrays.fill(prev, -1);
+        dist[startIdx] = 0;
+
+        int endCoordIdx = g.nodeFirstCoordIdx[endIdx];
+        int endLngS = endCoordIdx >= 0 ? g.coordPool[endCoordIdx * 2] : 0;
+        int endLatS = endCoordIdx >= 0 ? g.coordPool[endCoordIdx * 2 + 1] : 0;
+
+        MinHeap pq = new MinHeap(Math.min(g.nodeCount, 65536));
+        float startH = computeHeuristic(g, startIdx, endLngS, endLatS);
+        pq.push(startIdx, startH);
+
+        boolean[] closed = new boolean[g.nodeCount];
+        int stepCounter = 0;
+
+        // Push start node
+        stepCounter++;
+        result.pushCount++;
+        AStarStep initPush = new AStarStep();
+        initPush.step = stepCounter;
+        initPush.action = "PUSH";
+        initPush.node = startIdx;
+        initPush.nodeId = g.idMap != null && startIdx < g.idMap.length ? g.idMap[startIdx] : startIdx;
+        initPush.coord = getNodeCoord(g, startIdx);
+        Map<String, Object> initCost = new LinkedHashMap<>();
+        initCost.put("g", 0.0);
+        initCost.put("h", Math.round(startH * 100.0) / 100.0);
+        initCost.put("f", Math.round(startH * 100.0) / 100.0);
+        initPush.cost = initCost;
+        result.steps.add(initPush);
+
+        float[] popDist = new float[1];
+        boolean found = false;
+
+        while (!pq.isEmpty()) {
+            int u = pq.pop(popDist);
+            if (closed[u]) continue;
+            closed[u] = true;
+
+            stepCounter++;
+            result.popCount++;
+            AStarStep popStep = new AStarStep();
+            popStep.step = stepCounter;
+            popStep.action = "POP";
+            popStep.node = u;
+            popStep.nodeId = g.idMap != null && u < g.idMap.length ? g.idMap[u] : u;
+            popStep.coord = getNodeCoord(g, u);
+            popStep.fromNode = prev[u];
+            if (prev[u] != -1) {
+                popStep.fromCoord = getNodeCoord(g, prev[u]);
+                popStep.edgeCoords = findDirectedEdgeCoords(g, prev[u], u);
+            }
+            float uH = computeHeuristic(g, u, endLngS, endLatS);
+            Map<String, Object> popCost = new LinkedHashMap<>();
+            popCost.put("g", Math.round(dist[u] * 100.0) / 100.0);
+            popCost.put("h", Math.round(uH * 100.0) / 100.0);
+            popCost.put("f", Math.round((dist[u] + uH) * 100.0) / 100.0);
+            popStep.cost = popCost;
+            result.steps.add(popStep);
+
+            if (u == endIdx) {
+                found = true;
+                break;
+            }
+
+            if (stepCounter >= maxSteps) {
+                break;
+            }
+
+            int edgeStart = (g.dirNodeOffsets != null) ? g.dirNodeOffsets[u] : g.nodeOffsets[u];
+            int edgeEnd = (g.dirNodeOffsets != null) ? g.dirNodeOffsets[u + 1] : g.nodeOffsets[u + 1];
+
+            List<Map<String, Object>> pushBranches = new ArrayList<>();
+
+            for (int i = edgeStart; i < edgeEnd; i++) {
+                int target = (g.dirTarget != null) ? g.dirTarget[i] : g.edgesTarget[i];
+                if (closed[target]) continue;
+
+                float cost = directed
+                        ? (g.dirCost != null ? g.dirCost[i] : g.edgesCost[i])
+                        : (g.dirLen != null ? g.dirLen[i] : (g.edgesCost[i] > 0 ? g.edgesCost[i] : 100f));
+
+                if (cost >= 0) {
+                    float alt = dist[u] + cost;
+                    if (alt < dist[target]) {
+                        dist[target] = alt;
+                        prev[target] = u;
+                        float h = computeHeuristic(g, target, endLngS, endLatS);
+                        pq.push(target, alt + h);
+
+                        result.pushCount++;
+
+                        int rawIdx = (g.dirRawIdx != null) ? g.dirRawIdx[i] : i;
+                        boolean isRev = (g.dirIsRev != null) && (g.dirIsRev[i] == 1);
+                        List<double[]> eCoords = getEdgeCoordsAsDoubles(g, rawIdx, isRev);
+
+                        Map<String, Object> pushCost = new LinkedHashMap<>();
+                        pushCost.put("g", Math.round(alt * 100.0) / 100.0);
+                        pushCost.put("h", Math.round(h * 100.0) / 100.0);
+                        pushCost.put("f", Math.round((alt + h) * 100.0) / 100.0);
+
+                        Map<String, Object> branch = new LinkedHashMap<>();
+                        branch.put("node", target);
+                        branch.put("nodeId", g.idMap != null && target < g.idMap.length ? g.idMap[target] : target);
+                        branch.put("coord", getNodeCoord(g, target));
+                        branch.put("edgeCoords", eCoords);
+                        branch.put("cost", pushCost);
+                        pushBranches.add(branch);
+                    }
+                }
+            }
+
+            // 同一个节点拓展出的所有邻接边与点作为一个统一的入堆步骤
+            if (!pushBranches.isEmpty()) {
+                stepCounter++;
+                AStarStep pushStep = new AStarStep();
+                pushStep.step = stepCounter;
+                pushStep.action = "PUSH";
+                pushStep.fromNode = u;
+                pushStep.fromCoord = getNodeCoord(g, u);
+                pushStep.branches = pushBranches;
+
+                Map<String, Object> firstB = pushBranches.get(0);
+                pushStep.node = ((Number) firstB.get("node")).intValue();
+                pushStep.nodeId = ((Number) firstB.get("nodeId")).longValue();
+                pushStep.coord = (double[]) firstB.get("coord");
+                pushStep.edgeCoords = (List<double[]>) firstB.get("edgeCoords");
+                pushStep.cost = (Map<String, Object>) firstB.get("cost");
+
+                result.steps.add(pushStep);
+
+                if (stepCounter >= maxSteps) {
+                    break;
+                }
+            }
+        }
+
+        if (Float.isInfinite(dist[endIdx])) {
+            result.totalDistance = 0;
+            result.path = new int[0];
+            return result;
+        }
+
+        List<Integer> pathList = new ArrayList<>();
+        for (int curr = endIdx; curr != -1; curr = prev[curr]) {
+            pathList.add(curr);
+        }
+        Collections.reverse(pathList);
+
+        int[] path = new int[pathList.size()];
+        for (int i = 0; i < pathList.size(); i++) {
+            path[i] = pathList.get(i);
+        }
+        result.path = path;
+        result.totalDistance = dist[endIdx];
+        return result;
+    }
+
+    public static Map<String, Object> planRouteWithSnapAnimate(PgrbGraph g, double startLng, double startLat, double endLng, double endLat, boolean directed, int maxSteps) {
+        Map<String, Object> res = new LinkedHashMap<>();
+        if (g == null) {
+            res.put("code", 400);
+            res.put("msg", "路网尚未加载");
+            return res;
+        }
+
+        PgrbSnap startSnap = snapToNearestEdge(g, startLng, startLat);
+        PgrbSnap endSnap = snapToNearestEdge(g, endLng, endLat);
+
+        if (startSnap == null || endSnap == null) {
+            res.put("code", 404);
+            res.put("msg", "起终点无法吸附到有效路网");
+            return res;
+        }
+
+        // 0. 特殊处理：起终点在同一条边
+        if (startSnap.edgeIdx == endSnap.edgeIdx) {
+            List<int[]> sameCoords = getSameEdgeCoordsScaled(g, startSnap, endSnap, directed);
+            if (sameCoords != null && sameCoords.size() >= 2) {
+                double dist = Math.abs(startSnap.t - endSnap.t) * startSnap.length;
+                List<List<Double>> coordList = new ArrayList<>();
+                for (int[] pt : sameCoords) {
+                    coordList.add(Arrays.asList(pt[0] / 1e6, pt[1] / 1e6));
+                }
+
+                Map<String, Object> data = new LinkedHashMap<>();
+                data.put("networkId", g.networkId);
+                data.put("start", Map.of("lng", startLng, "lat", startLat));
+                data.put("end", Map.of("lng", endLng, "lat", endLat));
+                data.put("startSnapNode", startSnap.u);
+                data.put("endSnapNode", startSnap.v);
+
+                List<Map<String, Object>> stepList = new ArrayList<>();
+                Map<String, Object> singleStep = new LinkedHashMap<>();
+                singleStep.put("step", 1);
+                singleStep.put("action", "POP");
+                singleStep.put("node", startSnap.v);
+                singleStep.put("nodeId", g.idMap != null ? g.idMap[startSnap.v] : startSnap.v);
+                singleStep.put("coord", new double[]{endSnap.projPoint[0], endSnap.projPoint[1]});
+                singleStep.put("fromNode", startSnap.u);
+                singleStep.put("fromCoord", new double[]{startSnap.projPoint[0], startSnap.projPoint[1]});
+                List<double[]> dCoords = new ArrayList<>();
+                for (int[] pt : sameCoords) dCoords.add(new double[]{pt[0] / 1e6, pt[1] / 1e6});
+                singleStep.put("edgeCoords", dCoords);
+                singleStep.put("cost", Map.of("g", dist, "h", 0.0, "f", dist));
+                stepList.add(singleStep);
+                data.put("steps", stepList);
+
+                Map<String, Object> finalPath = new LinkedHashMap<>();
+                finalPath.put("totalDistance", Math.round(dist * 100.0) / 100.0);
+                finalPath.put("nodeCount", 2);
+                finalPath.put("nodes", List.of(g.idMap != null ? g.idMap[startSnap.u] : startSnap.u, g.idMap != null ? g.idMap[startSnap.v] : startSnap.v));
+                finalPath.put("coordinates", coordList);
+                data.put("finalPath", finalPath);
+
+                Map<String, Object> stats = new LinkedHashMap<>();
+                stats.put("totalSteps", 1);
+                stats.put("popCount", 1);
+                stats.put("pushCount", 0);
+                stats.put("costTimeMs", 0);
+                data.put("statistics", stats);
+
+                res.put("code", 200);
+                res.put("msg", "success");
+                res.put("data", data);
+                return res;
+            }
+        }
+
+        // 构建起点候选节点
+        List<Candidate> startCands = new ArrayList<>();
+        if (!directed || startSnap.revCost >= 0) {
+            startCands.add(new Candidate(startSnap.u, startSnap.t * startSnap.length));
+        }
+        if (!directed || startSnap.cost >= 0) {
+            startCands.add(new Candidate(startSnap.v, (1.0 - startSnap.t) * startSnap.length));
+        }
+        if (startCands.isEmpty()) {
+            res.put("code", 400);
+            res.put("msg", "起点所在道路受单向通行限制，无合法出行方向");
+            return res;
+        }
+
+        // 构建终点候选节点
+        List<Candidate> endCands = new ArrayList<>();
+        if (!directed || endSnap.cost >= 0) {
+            endCands.add(new Candidate(endSnap.u, endSnap.t * endSnap.length));
+        }
+        if (!directed || endSnap.revCost >= 0) {
+            endCands.add(new Candidate(endSnap.v, (1.0 - endSnap.t) * endSnap.length));
+        }
+        if (endCands.isEmpty()) {
+            res.put("code", 400);
+            res.put("msg", "终点所在道路受单向通行限制，无合法驶入方向");
+            return res;
+        }
+
+        Candidate bestSCand = null;
+        Candidate bestECand = null;
+        int[] bestPath = null;
+        double minTotalDist = Double.POSITIVE_INFINITY;
+        double[] outDist = new double[1];
+
+        // 确定最优候选节点对
+        for (Candidate sCand : startCands) {
+            for (Candidate eCand : endCands) {
+                int[] path = astar(g, sCand.node, eCand.node, directed, outDist);
+                if (path != null && path.length > 0) {
+                    double total = sCand.partialCost + outDist[0] + eCand.partialCost;
+                    if (total < minTotalDist) {
+                        minTotalDist = total;
+                        bestPath = path;
+                        bestSCand = sCand;
+                        bestECand = eCand;
+                    }
+                }
+            }
+        }
+
+        if (bestPath == null || bestPath.length == 0 || bestSCand == null || bestECand == null) {
+            res.put("code", 404);
+            res.put("msg", "起点与终点之间未找到连通路径");
+            return res;
+        }
+
+        // 针对最优候选节点对运行 astarAnimate 获取动画帧
+        AStarAnimateResult animRes = astarAnimate(g, bestSCand.node, bestECand.node, directed, maxSteps);
+
+        // 组装最终折线几何
+        List<int[]> finalCoordsScaled = assembleGeometryScaled(g, bestPath, startSnap, endSnap);
+        List<List<Double>> coordList = new ArrayList<>(finalCoordsScaled.size());
+        for (int[] pt : finalCoordsScaled) {
+            coordList.add(Arrays.asList(pt[0] / 1e6, pt[1] / 1e6));
+        }
+
+        Map<String, Object> data = new LinkedHashMap<>();
+        data.put("networkId", g.networkId);
+        data.put("start", Map.of("lng", startLng, "lat", startLat));
+        data.put("end", Map.of("lng", endLng, "lat", endLat));
+        data.put("startSnapNode", bestSCand.node);
+        data.put("endSnapNode", bestECand.node);
+
+        List<Map<String, Object>> stepMaps = new ArrayList<>(animRes.steps.size());
+        for (AStarStep s : animRes.steps) {
+            stepMaps.add(s.toMap());
+        }
+        data.put("steps", stepMaps);
+
+        Map<String, Object> finalPath = new LinkedHashMap<>();
+        finalPath.put("totalDistance", Math.round(minTotalDist * 100.0) / 100.0);
+        finalPath.put("nodeCount", bestPath.length);
+        List<Long> pathNodesList = new ArrayList<>(bestPath.length);
+        for (int node : bestPath) {
+            pathNodesList.add(g.idMap != null && node < g.idMap.length ? g.idMap[node] : (long) node);
+        }
+        finalPath.put("nodes", pathNodesList);
+        finalPath.put("coordinates", coordList);
+        data.put("finalPath", finalPath);
+
+        Map<String, Object> stats = new LinkedHashMap<>();
+        stats.put("totalSteps", animRes.steps.size());
+        stats.put("popCount", animRes.popCount);
+        stats.put("pushCount", animRes.pushCount);
+        data.put("statistics", stats);
+
+        res.put("code", 200);
+        res.put("msg", "success");
+        res.put("data", data);
+        return res;
+    }
 }
+

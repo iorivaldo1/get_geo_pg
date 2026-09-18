@@ -394,4 +394,60 @@ public class PgrbManageController {
 
         return pgrbRouterService.planBatchRoutes(networkId, mode, centerLng, centerLat, points, directed);
     }
+
+    /**
+     * 12. A* 寻径动画接口 (支持优先队列堆数据同步/分步动画渲染)
+     */
+    @RequestMapping(value = {"/route_animate", "/route-animate"}, method = {RequestMethod.POST, RequestMethod.GET})
+    public Map<String, Object> routeAnimate(
+            @RequestParam(value = "networkId", required = false) String networkId,
+            @RequestParam(value = "startLng", required = false) Double startLng,
+            @RequestParam(value = "startLat", required = false) Double startLat,
+            @RequestParam(value = "endLng", required = false) Double endLng,
+            @RequestParam(value = "endLat", required = false) Double endLat,
+            @RequestParam(value = "directed", required = false, defaultValue = "true") Boolean directed,
+            @RequestParam(value = "maxSteps", required = false, defaultValue = "0") Integer maxSteps,
+            @RequestBody(required = false) Map<String, Object> body,
+            HttpServletRequest request) {
+
+        if (body != null) {
+            if (networkId == null && body.containsKey("networkId")) networkId = String.valueOf(body.get("networkId"));
+            if (startLng == null && body.containsKey("startLng")) startLng = Double.parseDouble(String.valueOf(body.get("startLng")));
+            if (startLat == null && body.containsKey("startLat")) startLat = Double.parseDouble(String.valueOf(body.get("startLat")));
+            if (endLng == null && body.containsKey("endLng")) endLng = Double.parseDouble(String.valueOf(body.get("endLng")));
+            if (endLat == null && body.containsKey("endLat")) endLat = Double.parseDouble(String.valueOf(body.get("endLat")));
+            if (body.containsKey("directed")) directed = Boolean.parseBoolean(String.valueOf(body.get("directed")));
+            if (body.containsKey("maxSteps")) maxSteps = Integer.parseInt(String.valueOf(body.get("maxSteps")));
+        }
+
+        if (networkId == null) networkId = request.getParameter("networkId");
+        if (startLng == null && request.getParameter("startLng") != null) startLng = Double.parseDouble(request.getParameter("startLng"));
+        if (startLat == null && request.getParameter("startLat") != null) startLat = Double.parseDouble(request.getParameter("startLat"));
+        if (endLng == null && request.getParameter("endLng") != null) endLng = Double.parseDouble(request.getParameter("endLng"));
+        if (endLat == null && request.getParameter("endLat") != null) endLat = Double.parseDouble(request.getParameter("endLat"));
+        if (request.getParameter("directed") != null) directed = Boolean.parseBoolean(request.getParameter("directed"));
+        if (request.getParameter("maxSteps") != null) maxSteps = Integer.parseInt(request.getParameter("maxSteps"));
+
+        if (networkId == null || startLng == null || startLat == null || endLng == null || endLat == null) {
+            Map<String, Object> err = new HashMap<>();
+            err.put("code", 400);
+            err.put("msg", "缺少必填参数: networkId, startLng, startLat, endLng, endLat");
+            return err;
+        }
+
+        // 校验 xzq 行政级别：市级路网规模庞大，动画演进数据量过大，禁止调用动画分析
+        String netLevel = pgrbStorageService.getNetworkLevel(networkId);
+        boolean isCity = "city".equalsIgnoreCase(netLevel)
+                || (netLevel != null && (netLevel.contains("市") || netLevel.contains("city")))
+                || (networkId != null && (networkId.startsWith("xzq_city_") || networkId.contains("_city_")));
+        if (isCity) {
+            Map<String, Object> err = new HashMap<>();
+            err.put("code", 400);
+            err.put("msg", "市级行政区路网规模庞大、动画演进数据量超限，暂不支持 A* 动画演进分析，请切换至区县级或更小范围路网！");
+            return err;
+        }
+
+        return pgrbRouterService.planRouteAnimate(networkId, startLng, startLat, endLng, endLat, directed != null && directed, maxSteps);
+    }
 }
+

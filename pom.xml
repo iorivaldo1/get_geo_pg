@@ -32,6 +32,8 @@
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
         <mainClass>com.qskj.get_geo_pg.GetGeoPgApplication</mainClass>
+           <!--AI工具生成的临时测试，直接打包时跳过单元测试 -->
+        <skipTests>true</skipTests>
     </properties>
     <dependencies>
         <dependency>

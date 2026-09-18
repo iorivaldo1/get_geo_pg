@@ -189,4 +189,41 @@ public class PgrbRouterService {
         res.put("data", data);
         return res;
     }
+
+    /**
+     * A* 寻径动画计算 (返回入堆/出堆动画帧序列及最终最优路径)
+     */
+    public Map<String, Object> planRouteAnimate(String networkId, double startLng, double startLat, double endLng, double endLat, boolean directed, Integer maxSteps) {
+        long t0 = System.currentTimeMillis();
+        PgrbGraph g = getOrLoadGraph(networkId);
+        if (g == null) {
+            Map<String, Object> err = new LinkedHashMap<>();
+            err.put("code", 404);
+            err.put("msg", "未找到路网文件: " + networkId);
+            return err;
+        }
+
+        String netLevel = pgrbStorageService.getNetworkLevel(networkId);
+        boolean isCity = "city".equalsIgnoreCase(netLevel)
+                || (netLevel != null && (netLevel.contains("市") || netLevel.contains("city")))
+                || (networkId != null && (networkId.startsWith("xzq_city_") || networkId.contains("_city_")));
+        if (isCity) {
+            Map<String, Object> err = new LinkedHashMap<>();
+            err.put("code", 400);
+            err.put("msg", "市级行政区路网规模庞大、动画演进数据量超限，暂不支持 A* 动画演进分析，请切换至区县级或更小范围路网！");
+            return err;
+        }
+
+        int limit = (maxSteps != null && maxSteps > 0) ? maxSteps : 100_000;
+        Map<String, Object> res = PgrbGraphEngine.planRouteWithSnapAnimate(g, startLng, startLat, endLng, endLat, directed, limit);
+        long t1 = System.currentTimeMillis();
+        if (res.containsKey("data") && res.get("data") instanceof Map) {
+            Map<String, Object> data = (Map<String, Object>) res.get("data");
+            if (data.containsKey("statistics") && data.get("statistics") instanceof Map) {
+                ((Map<String, Object>) data.get("statistics")).put("costTimeMs", (t1 - t0));
+            }
+        }
+        return res;
+    }
 }
+
