@@ -911,7 +911,7 @@ public class XzqRoadBuildService {
 
             if (roadTable != null) {
                 String sql = String.format(
-                        "SELECT ST_AsGeoJSON(COALESCE(ST_ConcaveHull(ST_Collect(geom), 0.85), ST_ConvexHull(ST_Collect(geom)), ST_Envelope(ST_Collect(geom)))) AS geojson, " +
+                        "SELECT ST_AsGeoJSON(COALESCE(ST_ConvexHull(ST_Collect(geom)), ST_Envelope(ST_Collect(geom)))) AS geojson, " +
                                 "ST_XMin(ST_Extent(geom)) AS min_x, ST_XMax(ST_Extent(geom)) AS max_x, " +
                                 "ST_YMin(ST_Extent(geom)) AS min_y, ST_YMax(ST_Extent(geom)) AS max_y " +
                                 "FROM %s WHERE geom IS NOT NULL",
