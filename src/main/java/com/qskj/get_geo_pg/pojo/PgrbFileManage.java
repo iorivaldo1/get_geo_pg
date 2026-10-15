@@ -1,12 +1,8 @@
 package com.qskj.get_geo_pg.pojo;
 
 import lombok.Data;
-import lombok.NoArgsConstructor;
-import lombok.AllArgsConstructor;
 
 @Data
-@NoArgsConstructor
-@AllArgsConstructor
 public class PgrbFileManage {
     private Integer id;
     private String networkId;
